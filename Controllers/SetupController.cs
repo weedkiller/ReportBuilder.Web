@@ -15,9 +15,9 @@ namespace ReportBuilder.Web.Controllers
 {
     public class SetupController : Controller
     {
-        public async Task<ActionResult> Index()
+        public async Task<ActionResult> Index(string databaseApiKey = "")
         {
-            var connect = GetConnection();
+            var connect = GetConnection(databaseApiKey);
             var tables = new List<TableViewModel>();
 
             tables.AddRange(await GetTables("TABLE", connect.AccountApiKey, connect.DatabaseApiKey));
@@ -35,12 +35,12 @@ namespace ReportBuilder.Web.Controllers
 
         #region "Private Methods"
 
-        private ConnectViewModel GetConnection()
+        private ConnectViewModel GetConnection(string databaseApiKey)
         {
             return new ConnectViewModel
             {
                 AccountApiKey = ConfigurationManager.AppSettings["dotNetReport.accountApiToken"],
-                DatabaseApiKey = ConfigurationManager.AppSettings["dotNetReport.dataconnectApiToken"]
+                DatabaseApiKey = string.IsNullOrEmpty(databaseApiKey) ? ConfigurationManager.AppSettings["dotNetReport.dataconnectApiToken"] : databaseApiKey
             };
         }
        
@@ -147,7 +147,8 @@ namespace ReportBuilder.Web.Controllers
                     {
                         Id = item.tableId,
                         TableName = item.tableDbName,
-                        DisplayName = item.tableName
+                        DisplayName = item.tableName,
+                        AllowedRoles = item.tableRoles.ToObject<List<string>>()
                     });
 
                 }
@@ -160,7 +161,7 @@ namespace ReportBuilder.Web.Controllers
         {
             using (var client = new HttpClient())
             {
-                var response = await client.GetAsync(String.Format("{0}/ReportApi/GetFields?account={1}&dataConnect={2}&clientId={3}&tableId={4}", ConfigurationManager.AppSettings["dotNetReport.apiUrl"], accountKey, dataConnectKey, "", tableId));
+                var response = await client.GetAsync(String.Format("{0}/ReportApi/GetFields?account={1}&dataConnect={2}&clientId={3}&tableId={4}&includeDoNotDisplay=true", ConfigurationManager.AppSettings["dotNetReport.apiUrl"], accountKey, dataConnectKey, "", tableId));
 
                 response.EnsureSuccessStatusCode();
 
@@ -182,7 +183,9 @@ namespace ReportBuilder.Web.Controllers
                         DisplayOrder = item.fieldOrder,
                         ForeignKeyField = item.foreignKey,
                         ForeignValueField = item.foreignValue,
-                        ForeignTable = item.foreignTable
+                        ForeignTable = item.foreignTable,
+                        DoNotDisplay = item.doNotDisplay,
+                        AllowedRoles = item.columnRoles.ToObject<List<string>>()
                     };
 
                     JoinTypes join;
@@ -207,7 +210,7 @@ namespace ReportBuilder.Web.Controllers
                 currentTables = await GetApiTables(accountKey, dataConnectKey);
             }
 
-            var connString = await GetConnectionString(GetConnection());
+            var connString = await GetConnectionString(GetConnection(dataConnectKey));
             using (OleDbConnection conn = new OleDbConnection(connString))
             {
                 // open the connection to the database 
@@ -235,7 +238,8 @@ namespace ReportBuilder.Web.Controllers
                         DisplayName = matchTable != null ? matchTable.DisplayName : tableName,
                         IsView = type == "VIEW",
                         Selected = matchTable != null,
-                        Columns = new List<ColumnViewModel>()
+                        Columns = new List<ColumnViewModel>(),
+                        AllowedRoles = matchTable != null ? matchTable.AllowedRoles : new List<string>()
                     };
 
                     var dtField = conn.GetOleDbSchemaTable(OleDbSchemaGuid.Columns, new object[] { null, null, tableName });
@@ -250,7 +254,8 @@ namespace ReportBuilder.Web.Controllers
                             DisplayName = matchColumn != null ? matchColumn.DisplayName : dr["COLUMN_NAME"].ToString(),
                             PrimaryKey = matchColumn != null ? matchColumn.PrimaryKey : dr["COLUMN_NAME"].ToString().ToLower().EndsWith("id") && idx == 0,
                             DisplayOrder = matchColumn != null ? matchColumn.DisplayOrder : idx++,
-                            FieldType = matchColumn != null ? matchColumn.FieldType : ConvertToJetDataType((int)dr["DATA_TYPE"]).ToString()
+                            FieldType = matchColumn != null ? matchColumn.FieldType : ConvertToJetDataType((int)dr["DATA_TYPE"]).ToString(),
+                            AllowedRoles = matchColumn != null ? matchColumn.AllowedRoles : new List<string>()
                         };
 
                         if (matchColumn != null)
@@ -261,12 +266,15 @@ namespace ReportBuilder.Web.Controllers
                             column.ForeignKeyField = matchColumn.ForeignKeyField;
                             column.ForeignValueField = matchColumn.ForeignValueField;
                             column.Id = matchColumn.Id;
+                            column.DoNotDisplay = matchColumn.DoNotDisplay;
+                            column.DisplayOrder = matchColumn.DisplayOrder;
+
                             column.Selected = true;
                         }
 
                         table.Columns.Add(column);
                     }
-
+                    table.Columns = table.Columns.OrderBy(x => x.DisplayOrder).ToList();
                     tables.Add(table);
                 }
 

@@ -17,6 +17,7 @@
         <option>Last Month</option>
         <option>This Year</option>
         <option>Last Year</option>
+        <option>Last 30 Days</option>
     </select>
     <!-- /ko -->
     <!-- /ko -->
@@ -43,10 +44,10 @@
     <!-- ko if: hasForeignKey-->
     @*Show lookup list*@
     <!-- ko if: $parent.Operator()=='='-->
-    <select required class="form-control" data-bind="options: $parent.LookupList, optionsText:'text', optionsValue:'id', value: $parent.Value, optionsCaption: 'Please Choose'"></select>
+    <select required class="form-control" data-bind="select2: { placeholder: 'Please Choose', allowClear: true, multiple: false }, options: $parent.LookupList, optionsText:'text', optionsValue:'id', value: $parent.Value"></select>
     <!-- /ko -->
-    <!-- ko if: $parent.Operator()=='in'-->
-    <select multiple class="form-control" data-bind=" select2: { placeholder: 'Please Choose', allowClear: true }, options: $parent.LookupList, optionsText:'text', optionsValue:'id', selectedOptions: $parent.Value"></select>
+    <!-- ko if: $parent.Operator()=='in' || $parent.Operator()=='not in'-->
+    <select multiple class="form-control" data-bind="select2: { placeholder: 'Please Choose', allowClear: true }, options: $parent.LookupList, optionsText:'text', optionsValue:'id', selectedOptions: $parent.ValueIn"></select>
     <!-- /ko -->
     <!-- /ko -->
 </div>

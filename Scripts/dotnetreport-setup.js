@@ -6,8 +6,22 @@
 		DatabaseApiKey: options.model.DatabaseApiKey
 	};
 
+	self.DataConnections = ko.observableArray([]);
 	self.Tables = new tablesViewModel(options)
 	self.Joins = ko.observableArray([]);
+	self.currentConnectionKey = ko.observable(self.keys.DatabaseApiKey);
+	self.canSwitchConnection = ko.computed(function () {
+		return self.currentConnectionKey() != self.keys.DatabaseApiKey;
+	});
+	self.switchConnection = function () {
+		if (self.canSwitchConnection()) {
+			bootbox.confirm("Are you sure you would like to switch your Database Connection?", function (r) {
+				if (r) {
+					window.location.href = window.location.pathname + "?" + $.param({ 'databaseApiKey': self.currentConnectionKey() })
+				}
+			});
+		}
+	}
 
 	self.JoinFilters = {
 		primaryTable: ko.observable(),
@@ -26,7 +40,7 @@
 
 		var joins = self.Joins();
 
-		return $.grep(joins, function (x) {
+		return _.filter(joins, function (x) {
 			return (!primaryTableFilter || !x.JoinTable() || x.JoinTable().DisplayName().toLowerCase().indexOf(primaryTableFilter.toLowerCase()) >= 0)
 				&& (!primaryFieldFilter || !x.FieldName() || x.FieldName().toLowerCase().indexOf(primaryFieldFilter.toLowerCase()) >= 0)
 				&& (!joinTypeFilter || !x.JoinType() || x.JoinType().toLowerCase().indexOf(joinTypeFilter.toLowerCase()) >= 0)
@@ -41,6 +55,70 @@
 
 	self.selectColumn = function (e) {
 		self.editColumn(e);
+	}
+
+	self.editAllowedRoles = ko.observable();
+	self.newAllowedRole = ko.observable();
+	self.selectAllowedRoles = function (e) {
+		self.editAllowedRoles(e);
+	}
+
+	self.removeAllowedRole = function (e) {
+		self.editAllowedRoles().AllowedRoles.remove(e);
+	}
+
+	self.addAllowedRole = function () {
+		if (!self.newAllowedRole() || _.filter(self.editAllowedRoles().AllowedRoles(), function (x) { return x == self.newAllowedRole(); }).length > 0) {
+			toastr.error("Please add a new unique Role");
+			return;
+		}
+		self.editAllowedRoles().AllowedRoles.push(self.newAllowedRole());
+		self.newAllowedRole(null);
+	}
+
+	self.newDataConnection = {
+		Name: ko.observable(),
+		ConnectionKey: ko.observable(),
+		copySchema: ko.observable(false),
+		copyFrom: ko.observable()
+	}
+
+	self.addDataConnection = function () {
+		$(".form-group").removeClass("has-error");
+		if (!self.newDataConnection.Name()) {
+			$("#add-conn-name").closest(".form-group").addClass("has-error");
+			return false;
+		}
+		if (!self.newDataConnection.ConnectionKey()) {
+			$("#add-conn-key").closest(".form-group").addClass("has-error");
+			return false;
+		}
+
+		ajaxcall({
+			url: options.addDataConnectionUrl,
+			type: 'POST',
+			data: JSON.stringify({
+				account: self.keys.AccountApiKey,
+				dataConnect: self.newDataConnection.copySchema() ? self.newDataConnection.copyFrom() : self.keys.DatabaseApiKey,
+				newDataConnect: self.newDataConnection.Name(),
+				connectionKey: self.newDataConnection.ConnectionKey(),
+				copySchema: self.newDataConnection.copySchema()
+			})
+		}).done(function (result) {
+			self.DataConnections.push({
+				Id: result.Id,
+				DataConnectName: self.newDataConnection.Name(),
+				ConnectionKey: self.newDataConnection.ConnectionKey(),
+				DataConnectGuid: result.DataConnectGuid
+			});
+
+			self.newDataConnection.Name('');
+			self.newDataConnection.ConnectionKey('');
+			toastr.success("Data Connection added successfully");
+			$('#add-connection-modal').modal('hide');
+		});
+
+		return true;
 	}
 
 	self.setupJoin = function (item) {
@@ -81,11 +159,26 @@
 			});
 		};
 
-		item.JoinTable($.grep(self.Tables.model(), function (x) { return x.Id() == item.TableId(); })[0]);
-		item.OtherTable($.grep(item.OtherTables(), function (x) { return x.Id() == item.JoinedTableId(); })[0]);
+		item.JoinTable(_.filter(self.Tables.model(), function (x) { return x.Id() == item.TableId(); })[0]);
+		item.OtherTable(_.filter(item.OtherTables(), function (x) { return x.Id() == item.JoinedTableId(); })[0]);
 
 		return item;
 	};
+
+	self.LoadDataConnections = function () {
+
+		ajaxcall({
+			url: options.getDataConnectionsUrl,
+			type: 'POST',
+			data: JSON.stringify({
+				account: self.keys.AccountApiKey,
+				dataConnect: self.keys.DatabaseApiKey
+			})
+		}).done(function (result) {
+			self.DataConnections(result);
+			self.currentConnectionKey(self.keys.DatabaseApiKey);
+		});
+	}
 
 	self.LoadJoins = function () {
 		// Load and setup Relations
@@ -101,9 +194,7 @@
 			self.Joins($.map(result, function (item) {
 				return self.setupJoin(item);
 			}));
-
 		});
-
 	};
 
 	self.AddJoin = function () {
@@ -116,14 +207,7 @@
 		}));
 	};
 
-	self.SaveJoins = function () {
-
-		$("#form-joins").validate().showErrors();
-
-		if (!$("#form-joins").valid()) {
-			return false;
-		}
-
+	self.getJoinsToSave = function () {
 		$.each(self.Joins(), function (i, x) {
 			x.TableId(x.JoinTable().Id());
 			x.JoinedTableId(x.OtherTable().Id());
@@ -140,6 +224,13 @@
 				JoinFieldName: x.JoinFieldName
 			}
 		});
+
+		return joinsToSave;
+	}
+
+	self.SaveJoins = function () {
+		
+		var joinsToSave = self.getJoinsToSave();
 
 		ajaxcall({
 			url: options.saveRelationsUrl,
@@ -176,6 +267,66 @@
 			}
 		})
 	}
+
+	self.download = function(content, fileName, contentType) {
+		var a = document.createElement("a");
+		var file = new Blob([content], { type: contentType });
+		a.href = URL.createObjectURL(file);
+		a.download = fileName;
+		a.click();
+	}
+
+	self.exportAll = function () {
+		var tablesToSave = $.map(self.Tables.model(), function (x) {
+			if (x.Selected()) {
+				return ko.mapping.toJS(x, {
+					'ignore': ["saveTable", "JoinTable"]
+				})
+			}
+		});
+
+		var joinsTosave = self.getJoinsToSave();
+
+		var exportJson = JSON.stringify({
+			tables: tablesToSave,
+			joins: joinsTosave
+		});
+
+		var connection = _.filter(self.DataConnections(), function (i, e) { return e.DataConnectGuid == self.currentConnectionKey(); });
+		self.download(exportJson, (connection.length > 0 ? connection[0].DataConnectName : 'dotnet-dataconnection-export') + '.json', 'text/plain');
+	}
+
+	self.importingFile = ko.observable(false);
+	self.importCancel = function () {
+		self.importingFile(false);
+	}
+	self.importFile = function (file) {
+		var reader = new FileReader();
+		reader.onload = function (event) {
+			var importedData = JSON.parse(event.target.result);
+			$.each(importedData.tables, function (i, e) {
+				var tableMatch = _.filter(self.Tables.model(), function (x) {
+					return x.TableName().toLowerCase() == e.TableName.toLowerCase();
+				});
+				if (tableMatch.length > 0) {
+					var match = tableMatch[0];
+				} else {
+
+				}
+			});
+
+			$('#import-file').val("");
+		};
+
+		reader.readAsText(file);
+
+		self.importingFile(false);
+
+	}
+
+	self.importStart = function () {
+		self.importingFile(true);
+	}
 }
 
 var tablesViewModel = function (options) {
@@ -185,13 +336,13 @@ var tablesViewModel = function (options) {
 	$.each(self.model(), function (i, t) {
 
 		t.availableColumns = ko.computed(function () {
-			return $.grep(t.Columns(), function (e) {
+			return _.filter(t.Columns(), function (e) {
 				return e.Id() > 0 && e.Selected();
 			});
 		});
 
 		$.each(t.Columns(), function (i, e) {
-			var tableMatch = $.grep(self.model(), function (x) { return x.TableName() == e.ForeignTable(); });
+			var tableMatch = _.filter(self.model(), function (x) { return x.TableName() == e.ForeignTable(); });
 			e.JoinTable = ko.observable(tableMatch != null && tableMatch.length > 0 ? tableMatch[0] : null);
 			e.JoinTable.subscribe(function (newValue) {
 				e.ForeignTable(newValue.TableName());
@@ -204,11 +355,28 @@ var tablesViewModel = function (options) {
 				'ignore': ["saveTable", "JoinTable"]
 			});
 
-			if (!t.Selected) {
+			if (!t.Selected()) {
+				bootbox.confirm("Are you sure you would like to delete Table '" + e.DisplayName + "'?", function (r) {
+					if (r) {
+						ajaxcall({
+							url: options.deleteTableUrl,
+							type: 'POST',
+							data: JSON.stringify({
+								account: apiKey,
+								dataConnect: dbKey,
+								tableId: e.Id
+							})
+						}).done(function () {
+							toastr.success("Deleted table " + e.DisplayName);
+						});
+					}
+				});
+
+				
 				return;
 			}
 
-			if ($.grep(e.Columns, function (x) { return x.Selected; }).length == 0) {
+			if (_.filter(e.Columns, function (x) { return x.Selected; }).length == 0) {
 				toastr.error("Cannot save table " + e.DisplayName + ", no columns selected");
 				return;
 			}
@@ -229,7 +397,7 @@ var tablesViewModel = function (options) {
 	});
 
 	self.availableTables = ko.computed(function () {
-		return $.grep(self.model(), function (e) {
+		return _.filter(self.model(), function (e) {
 			return e.Id() > 0 && e.Selected();
 		});
 	})
@@ -242,7 +410,7 @@ var tablesViewModel = function (options) {
 			return self.model();
 		}
 
-		return $.grep(self.model(), function (e) {
+		return _.filter(self.model(), function (e) {
 			return e.TableName().toLowerCase().indexOf(filterText.toLowerCase()) >= 0;
 		})
 	})
@@ -289,5 +457,4 @@ var tablesViewModel = function (options) {
 		});
 
 	}
-
 }
